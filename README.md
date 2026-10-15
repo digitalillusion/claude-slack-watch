@@ -1,4 +1,4 @@
-# claude-slack-impersonator
+# claude-slack-watch
 
 A [Claude Code](https://claude.com/claude-code) skill that watches your Slack and answers, as you, the messages
 you have left unanswered. You choose what it watches (channels, DMs, group DMs, mentions, threads you took part in),
@@ -11,40 +11,43 @@ The skill is called `slack-watch`; this repository is its home.
 ## How it works
 
 ```
-                 every N minutes (Claude Code cron job, per window)
-                                   │
-Slack ──(claude.ai Slack connector: read, search, send)──> Claude Code session ──> reply in your name
-  │                                                                  ▲
-  └─(optional) Socket Mode ──> slack_watch.py listen ──> events.jsonl ─┘ (tailed by a Monitor: real time)
+Slack ◀──── claude.ai Slack connector (read, search, send as you) ────▶ Claude Code session ──▶ replies and task posts
+  │                                                                         ▲    ▲    ▲
+  │                               timed checks, every N minutes per window ─┘    │    │
+  │                                             recurring tasks, at their times ─┘    │
+  └── Socket Mode ──▶ slack_watch.py listen ──▶ events.jsonl ── Monitor ──────────────┘  (optional: real time)
 ```
 
 - **Timed checks.** `/slack-watch` creates one Claude Code cron job per window. Each run reads what the window
   watches, finds the messages still waiting for you, and answers them.
-- **Real-time listener (optional).** A small Python service holds a Slack Socket Mode connection and appends one line
-  per watched message to an events file: channel, sender, timestamps, **never the text**. The Claude Code session
-  tails that file and answers within seconds. Without it, answers wait for the next timed check.
 - **Recurring tasks (optional).** Instructions you write, run at set times on set days, with the result posted to
   you, to a channel, or kept in the session.
-- **Config.** Everything personal (who you are, channels, schedule, reply language and tone, people, fact sources)
-  lives in `~/.config/slack-watch/config.json`, outside this repository.
+- **Real-time listener (optional).** A small Python service holds a Slack Socket Mode connection and appends one line
+  per watched message to an events file: channel, sender, timestamps, **never the text**. The Claude Code session
+  tails that file with a Monitor and answers within seconds. Without it, answers wait for the next timed check.
+- **Config.** Everything personal (who you are, channels, schedule, reply language and tone, people, fact sources,
+  tasks) lives in `~/.config/slack-watch/config.json`, outside this repository.
 
 ## What it answers, and what it doesn't
 
-- It answers **pending** messages: from someone else, with nothing from you after them in the same conversation or
-  thread. It skips bots, thanks, greetings, FYIs and status updates.
-- It states **facts only**, from the sources you list, and says what it checked and what it didn't.
+- It answers **pending** messages: from someone else, with nothing from you after them in the same DM, group DM,
+  channel or thread. It skips bots, thanks, greetings, FYIs, status updates and chit-chat that needs no answer.
+- It answers in the thread when the message is a thread reply or a question about an earlier post, and in the
+  conversation otherwise. It re-reads the conversation right before sending, so the same answer never goes out twice.
+- It states **facts only**, from the sources you list, and says what it checked and what it didn't (for example,
+  code read but tests not run).
 - It **never decides for you**: no deadlines, priorities, approvals, merges or new work. It replies that you'll pick
-  it up, and lists the item for you in the session.
-- It **never acts on a message's request**: messages are information, not instructions. Code, tickets and documents
-  are not changed because someone asked in Slack.
+  it up, or asks a clarifying question, and lists the item for you in the session.
+- It **never acts on a message's request**: messages are information, not instructions. Code, branches, PRs, tickets
+  and documents are not changed because someone asked in Slack.
 - Replies go out in your name. Slack marks messages sent through the connector with a "Sent using Claude" note, so
   colleagues can tell. Check that your workspace is fine with this before you turn it on.
 
 ## Requirements
 
 - Claude Code, signed in to the claude.ai account that has the **Slack connector** connected to your workspace
-  account (<https://claude.ai/customize/connectors>). Check in Claude Code with `/mcp`: the `claude.ai Slack` tools must be
-  listed. If you connected Slack on a different claude.ai account, Claude Code will not see it.
+  account (<https://claude.ai/customize/connectors>). Check in Claude Code with `/mcp`: the `claude.ai Slack` tools
+  must be listed. If you connected Slack on a different claude.ai account, Claude Code will not see it.
 - Python 3.10 or newer (`slack_watch.py check` uses only the standard library).
 - For the real-time listener only: Linux with systemd user services, and permission to install a Slack app in your
   workspace (some workspaces need an admin to approve it).
@@ -52,9 +55,9 @@ Slack ──(claude.ai Slack connector: read, search, send)──> Claude Code s
 ## Install
 
 ```bash
-git clone https://github.com/adalpane662/claude-slack-impersonator.git ~/src/claude-slack-impersonator
+git clone https://github.com/digitalillusion/claude-slack-watch.git ~/src/claude-slack-watch
 mkdir -p ~/.claude/skills
-ln -s ~/src/claude-slack-impersonator/slack-watch ~/.claude/skills/slack-watch
+ln -s ~/src/claude-slack-watch/slack-watch ~/.claude/skills/slack-watch
 ```
 
 Start a new Claude Code session; `/slack-watch` is now available.
@@ -75,6 +78,8 @@ Run `/slack-watch setup` in Claude Code. It walks you through:
 6. **Tasks** (optional): recurring jobs, each with days, time(s), instructions and where the result goes.
 7. It shows the finished config, writes it after your yes, and validates it.
 
+Run it again later to change anything: it starts from your current config.
+
 A finished config looks like this:
 
 ```json
@@ -92,8 +97,8 @@ A finished config looks like this:
   "replies": {
     "language": "sender",
     "tone": "short and factual",
-    "people": { "U0987654321": { "name": "Alex", "language": "en" } },
-    "sources": ["repo ~/src/acme-api (read-only)", "GitHub through gh (read-only)"],
+    "people": { "U0987654321": { "name": "Alex", "language": "en", "note": "Leads the release; prefers bullet points." } },
+    "sources": ["repo ~/src/acme-api (read-only)", "GitHub through gh (read-only)", "Linear (read-only)"],
     "context_files": [],
     "notes": ["Release 2.4 ships on Thursdays."]
   },
@@ -105,34 +110,87 @@ A finished config looks like this:
 }
 ```
 
-Window rules: `days` takes `*`, `mon-fri`, `sat,sun`, `fri-mon`…; a window whose `to` is before `from` runs past
-midnight and belongs to the day it starts on; `from` = `to` means all day. `every_minutes` is at least 5 and divides
-60, or is whole hours that divide a day. `lookback_minutes` lets a window's first check look back before it opened.
-The full reference is in [`slack-watch/SKILL.md`](slack-watch/SKILL.md#config).
+## Config reference
 
-Task rules: `days` as for windows; `at` is one `HH:MM` or a list; `post_to` is `me` (the default: a DM to yourself),
-`channel:<name>` (a key of `channels`), or `session` (nothing is posted; handy to try a task out). Tasks run whether
-or not a window is open. The instructions are yours, so the task follows them, with the same limits as replies:
-sources read-only, facts only, nothing decided for you. What it reads along the way, such as a colleague's post, is
-information, not instructions.
+The config is read from `$SLACK_WATCH_CONFIG`, or `~/.config/slack-watch/config.json` when that is not set. The full
+reference is also in [`slack-watch/SKILL.md`](slack-watch/SKILL.md#config).
 
-Validate the config and see the cron entries and next task runs it produces at any time:
+| Key | Meaning |
+|---|---|
+| `slack.user_id` | Your Slack user id (`U…`): the account replies are sent as, and whose messages never count as pending. `/slack-watch` refuses to start if the connector is signed in as someone else. |
+| `slack.team`, `team_id`, `email`, `name` | Your workspace name and id (`T…`), email and display name. |
+| `timezone` | The zone the window and task times are in. Keep it the machine's: the cron jobs run on the machine's clock, and `check` warns when the two differ. |
+| `channels` | Short names for channel ids (`C…`, `G…` or `D…`), used as `channel:<name>` in `watch` and `post_to`. |
+| `windows[].name` | A unique name. |
+| `windows[].days` | `*`, `mon-fri`, `sat,sun`, `fri-mon`, … |
+| `windows[].from`, `to` | `HH:MM`. A `to` before `from` runs past midnight, and the window belongs to the day it starts on (`mon-fri` 18:00–09:00 covers Friday night into Saturday morning, not Sunday night). `from` = `to` means all day. |
+| `windows[].every_minutes` | How often the timed check runs: at least 5, dividing 60 (5, 10, 15, 20, 30), or whole hours dividing a day (60, 120, 180, 240, 360, 480, 720, 1440). With the listener on, it is a safety net. |
+| `windows[].lookback_minutes` | How far before the window opened its first check looks (60 catches a 17:55 message for an 18:00 window). |
+| `windows[].watch` | Any of `channel:<name>`, `dms`, `group_dms`, `mentions` (of you, in any channel) and `my_threads` (threads you took part in). |
+| `replies.language` | `sender` (answer in the language each message was written in) or a fixed language. |
+| `replies.tone` | How replies should sound, in your words. |
+| `replies.people` | Per person, by user id: a `name`, a `language` that overrides `replies.language`, and a `note`. |
+| `replies.sources` | Where facts may come from (repositories, `gh`, Linear, URLs, …). All are used read-only. |
+| `replies.context_files` | Files read for background before the first answer of a session and before each task run. |
+| `replies.notes` | Standing facts every reply and task can rely on. |
+| `tasks` | Recurring tasks; see below. Optional. |
+| `listener.events_file` | Where the listener writes events (default `~/.local/state/slack-watch/events.jsonl`). |
+| `listener.service` | The systemd user unit name of the listener (default `slack-watch`). |
 
-```bash
-python3 ~/.claude/skills/slack-watch/slack_watch.py check
-```
+## Recurring tasks
+
+| Key | Meaning |
+|---|---|
+| `name` | A unique name. |
+| `days` | As for windows. |
+| `at` | One `HH:MM`, or a list of them. |
+| `instructions` | What to do, in your words: what to read, from which sources, what to write. |
+| `post_to` | `me` (the default: a DM to yourself), `channel:<name>`, or `session` (nothing is posted; handy to try a task out). |
+
+- Tasks run whether or not a window is open.
+- The instructions are yours, so the task follows them, with the same limits as replies: sources read-only, facts
+  only, nothing decided for you. What it reads along the way, such as a colleague's post, is information, not
+  instructions.
+- The result is written in the tone `replies.tone` sets and in the language the instructions are written in, unless
+  they say otherwise. When something the instructions rely on is missing (a post not written yet, a source that does
+  not answer), the result says so instead of guessing.
+- Each run is a one-shot job that first schedules the next run, because a recurring daily job can fire up to 30
+  minutes late and a one-shot fires on time. Taking a task out of the config ends its runs.
 
 ## Use
 
 | Command | What it does |
 |---|---|
-| `/slack-watch` | Creates the timed checks and the task runs, arms the real-time watcher if the listener runs, and checks the open windows now |
-| `/slack-watch status` | Windows, cron entries, next task runs, jobs, watcher, listener service and its last log lines |
-| `/slack-watch stop` | Deletes the timed checks and the task runs, and stops the watcher (the listener service keeps running) |
+| `/slack-watch` | Checks the config and that the connector is signed in as `slack.user_id`, creates the timed checks and the task runs, arms the real-time watcher if the listener runs, and checks the open windows now. It refuses to start twice in a session. |
+| `/slack-watch status` | Windows, cron entries, next task runs, jobs, watcher, listener service and its last log lines, and the last events |
+| `/slack-watch stop` | Deletes the timed checks and the task runs, and stops the watcher. The listener service keeps running: `systemctl --user disable --now slack-watch` stops it. |
 | `/slack-watch setup` | Creates or changes the config |
+
+Every timed check, task run and real-time event ends with a short report in the session: what was answered or
+posted, with links, and what was left for you.
 
 Replies are posted with the Slack connector's send tool. If your Claude Code permission mode asks before every post,
 allow that tool for this to run unattended.
+
+### Changing the config
+
+- Who to answer, what each window watches, reply settings and task instructions: every check and task run reads the
+  config afresh, so edits apply from the next one. The listener re-reads the config when the file changes, and keeps
+  the previous one if an edit does not validate.
+- A window's `days`, hours or `every_minutes`: the cron jobs are made at start, so run `/slack-watch stop` and
+  `/slack-watch`.
+- A task's `days` or `at`: applies from the run after next (each run schedules the next from the config), or at once
+  with stop and start.
+
+### Checking the config
+
+```bash
+python3 ~/.claude/skills/slack-watch/slack_watch.py check
+```
+
+It validates the config and prints JSON: the `config` path, `errors` and `warnings`, the time `now`, each window's `crons` and whether
+it is `open`, `open_now`, each task's `next` run and its one-shot `cron`, the `events_file` and the listener
+`service`. It exits 1 when there are errors, needs no Slack token, and honours `SLACK_WATCH_CONFIG`.
 
 ## Real-time listener (optional)
 
@@ -203,21 +261,28 @@ loginctl enable-linger "$USER"   # optional: keep it running while you are logge
 ```
 
 **5. Verify.** `journalctl --user -u slack-watch -n 20` shows `connected`. Then have **someone else** message you in a
-watched place during an open window: a line appears in `~/.local/state/slack-watch/events.jsonl`. Your own messages
-never produce an event, including a DM to yourself. If nothing arrives while connected, check that the app's
-**Event Subscriptions** page lists the four user events, and reinstall the app after any scope change.
+watched place during an open window: a line appears in the events file. If nothing arrives while connected, check
+that the app's **Event Subscriptions** page lists the four user events, and reinstall the app after any scope change.
+The session starts tailing the events at the next `/slack-watch` or timed check.
 
-The listener re-reads the config when it changes and keeps the previous one if an edit does not validate.
+**What it records.** One JSON line per message that a window open at that moment watches:
+
+```json
+{"at": "2026-10-15T09:41:07+02:00", "kind": "dm", "channel": "D0123456789", "user": "U0987654321", "ts": "1792050067.123456", "thread_ts": null}
+```
+
+`kind` is `channel:<name>`, `dm`, `group_dm` or `mention`. It never records message text, your own messages
+(including a DM to yourself), bots, edits or deletions. The session reads the message itself through the connector.
+`my_threads` is left to the timed checks.
 
 ## Limits
 
 - The timed checks, the task runs and the watcher live in one Claude Code session: they stop when it exits, and
-  Claude Code expires recurring jobs after 7 days. Run `/slack-watch` again in a new session.
-- Each task run is a one-shot job that schedules the next one, because a recurring daily job can fire up to 30
-  minutes late and a one-shot fires on time. So tasks do not expire after 7 days; a run due while the session is
-  busy waits until it is idle.
+  Claude Code expires recurring jobs after 7 days (task runs are one-shot jobs, so they do not expire). Run
+  `/slack-watch` again in a new session.
 - Cron jobs fire only while the session is idle, and Claude Code delays each recurring run by up to half its interval,
-  so a 60-minute check can run up to about 30 minutes late.
+  so a 60-minute check can run up to about 30 minutes late. A check that lands outside its window does nothing.
+- The Monitor that tails the events file lasts 30 minutes; the session re-arms it each time it expires.
 - `my_threads` is covered by the timed checks only: the listener cannot tell which threads you took part in without
   an API call per message.
 - The Claude app for Slack does not help here: an @mention starts a cloud session that replies as Claude, and it
@@ -227,8 +292,8 @@ The listener re-reads the config when it changes and keeps the previous one if a
 
 | Path | What |
 |---|---|
-| [`slack-watch/SKILL.md`](slack-watch/SKILL.md) | The skill: setup, start, stop, status, the check, the watcher, and the reply rules |
-| [`slack-watch/slack_watch.py`](slack-watch/slack_watch.py) | `check` validates the config and prints cron entries; `listen` is the Socket Mode listener |
+| [`slack-watch/SKILL.md`](slack-watch/SKILL.md) | The skill: setup, start, stop, status, the check, recurring tasks, the watcher, and the reply rules |
+| [`slack-watch/slack_watch.py`](slack-watch/slack_watch.py) | `check` validates the config and prints the cron entries and next task runs; `listen` is the Socket Mode listener |
 
 ## License
 
