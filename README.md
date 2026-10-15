@@ -31,7 +31,10 @@ Slack ◀──── claude.ai Slack connector (read, search, send as you) ─�
 ## What it answers, and what it doesn't
 
 - It answers **pending** messages: from someone else, with nothing from you after them in the same DM, group DM,
-  channel or thread. It skips bots, thanks, greetings, FYIs, status updates and chit-chat that needs no answer.
+  channel or thread, and that personally concern you: a DM to you, a message that mentions or names you, or a reply
+  to you in a thread. A message in a group DM or channel addressed to the group, to someone else or to nobody in
+  particular is left to you and listed in the session. It skips bots, thanks, greetings, FYIs, status updates and
+  chit-chat that needs no answer.
 - It answers in the thread when the message is a thread reply or a question about an earlier post, and in the
   conversation otherwise. It re-reads the conversation right before sending, so the same answer never goes out twice.
 - It states **facts only**, from the sources you list, and says what it checked and what it didn't (for example,

@@ -184,8 +184,11 @@ Tasks run whether or not a window is open.
 ## Rules
 
 - **Pending**: a message from someone other than the person, with nothing from the person after it in the same DM,
-  group DM, channel or thread. Skip bots, thanks, greetings, FYI and status updates, and chit-chat that needs no
-  answer. Re-read the conversation right before sending, so the same answer never goes out twice.
+  group DM, channel or thread, that personally concerns the person: a DM to them, a message that mentions or names
+  them, or a reply to them in a thread. A message in a group DM or channel addressed to the group, to someone else or
+  to nobody in particular is not pending: leave it to the person and list it in the session. Skip bots, thanks,
+  greetings, FYI and status updates, and chit-chat that needs no answer. Re-read the conversation right before
+  sending, so the same answer never goes out twice.
 - **Voice**: the language `replies` sets for that sender, in the configured tone. Read `context_files` and `notes`
   before the first answer of a session.
 - **Facts only**, from the configured `sources`. Say what you checked and what you didn't (for example, code read but
