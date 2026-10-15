@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Slack watch: relays incoming Slack messages to a Claude Code session, on the schedule in a config file.
 
-  slack_watch.py check    Validate the config and print, as JSON, the cron entries of each window's timed check
-                          and the windows open now. Exits 1 when the config has errors. Needs no Slack token.
+  slack_watch.py check    Validate the config and print, as JSON, the cron entries of each window's timed check,
+                          the windows open now, and each recurring task's next run as a one-shot cron entry. Exits 1
+                          when the config has errors. Needs no Slack token.
   slack_watch.py listen   Hold a Socket Mode connection (app token in SLACK_APP_TOKEN) and append one JSON line per
                           message that an open window watches to the events file. A Claude Code Monitor tails that
                           file and wakes the session, which reads the message through the Slack connector.
@@ -29,6 +30,11 @@ DEFAULT_EVENTS = "~/.local/state/slack-watch/events.jsonl"
 # Plain messages and the subtypes that are still someone writing.
 WRITTEN_SUBTYPES = {None, "thread_broadcast", "file_share"}
 WATCHABLE = {"dms", "group_dms", "mentions", "my_threads"}
+# Where a task posts its result: a DM to the person, or only the session report (a channel is "channel:<name>").
+POST_TARGETS = {"me", "session"}
+# A task run schedules its next run later than this, so a run that fires a little early (a one-shot job on :00 or
+# :30 can, by up to 90 s) does not schedule itself again for the same time.
+RESCHEDULE_MARGIN = datetime.timedelta(minutes=2)
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -127,6 +133,26 @@ def problems(config: dict) -> tuple[list[str], list[str]]:
         for item in watch:
             if item not in WATCHABLE and not (isinstance(item, str) and item.startswith("channel:") and item[8:] in channels):
                 errors.append(f"{label}: unknown watch item {item!r} (use {', '.join(sorted(WATCHABLE))} or channel:<a key of channels>)")
+    tasks = config.get("tasks", [])
+    if not isinstance(tasks, list):
+        errors.append("tasks: must be a list")
+        tasks = []
+    task_names = [task.get("name") for task in tasks]
+    for i, task in enumerate(tasks):
+        label = f"tasks[{i}] ({task.get('name') or 'unnamed'})"
+        if not task.get("name") or task_names.count(task["name"]) > 1:
+            errors.append(f"{label}: needs a name of its own")
+        try:
+            day_set(task.get("days", "*"))
+            if not task_times(task):
+                errors.append(f"{label}: at needs at least one time")
+        except ValueError as error:
+            errors.append(f"{label}: {error}")
+        if not (isinstance(task.get("instructions"), str) and task["instructions"].strip()):
+            errors.append(f"{label}: instructions are missing")
+        post_to = task.get("post_to", "me")
+        if post_to not in POST_TARGETS and not (isinstance(post_to, str) and post_to.startswith("channel:") and post_to[8:] in channels):
+            errors.append(f"{label}: post_to must be {', '.join(sorted(POST_TARGETS))} or channel:<a key of channels>")
     return errors, warnings
 
 
@@ -165,6 +191,40 @@ def crons(window: dict) -> list[str]:
     return [f"{minute_field} {cron_field(list(hours), 24)} * * {cron_field(days, 7)}" for hours, days in days_by_hours.items()]
 
 
+def task_times(task: dict) -> list[int]:
+    """The task's `at`, one HH:MM or a list of them, as minutes of the day."""
+    at = task.get("at")
+    return sorted(minutes(time) for time in (at if isinstance(at, list) else [at]))
+
+
+def next_run(task: dict, now: datetime.datetime) -> datetime.datetime:
+    """The task's first run later than `now` plus RESCHEDULE_MARGIN, in `now`'s timezone."""
+    days = day_set(task.get("days", "*"))
+    earliest = now + RESCHEDULE_MARGIN
+    for offset in range(8):
+        day = (now + datetime.timedelta(days=offset)).date()
+        if day.weekday() not in days:
+            continue
+        for minute in task_times(task):
+            run = datetime.datetime.combine(day, datetime.time(minute // 60, minute % 60), now.tzinfo)
+            if run > earliest:
+                return run
+    raise ValueError(f"task {task.get('name')!r} has no run in the next week")
+
+
+def task_report(task: dict, now: datetime.datetime) -> dict:
+    """The task's next run, and the one-shot cron entry (this machine's clock) that fires it. Tasks run from one-shot
+    jobs, each scheduling the next, because a recurring daily job can fire up to 30 minutes late."""
+    run = next_run(task, now)
+    local = run.astimezone()
+    return {
+        "name": task["name"],
+        "next": run.isoformat(timespec="minutes"),
+        "cron": f"{local.minute} {local.hour} {local.day} {local.month} *",
+        "post_to": task.get("post_to", "me"),
+    }
+
+
 def events_file(config: dict) -> str:
     return os.path.expanduser(config.get("listener", {}).get("events_file", DEFAULT_EVENTS))
 
@@ -184,6 +244,7 @@ def check() -> int:
         report["now"] = now.isoformat(timespec="minutes")
         report["windows"] = [{"name": w["name"], "crons": crons(w), "open": is_open(w, now)} for w in config["windows"]]
         report["open_now"] = [w["name"] for w in config["windows"] if is_open(w, now)]
+        report["tasks"] = [task_report(task, now) for task in config.get("tasks", [])]
         report["events_file"] = events_file(config)
         report["service"] = config.get("listener", {}).get("service", "slack-watch")
     print(json.dumps(report, indent=2, ensure_ascii=False))
