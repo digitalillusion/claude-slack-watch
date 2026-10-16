@@ -193,6 +193,10 @@ Tasks run whether or not a window is open.
   before the first answer of a session.
 - **Facts only**, from the configured `sources`. Say what you checked and what you didn't (for example, code read but
   tests not run).
+- **Only evidence that settles the question.** Before answering whether something works or is done, read what the
+  people involved already reported in the recent conversations (a test session, a confirmation, a ticket's state). A
+  weak signal is not an answer: a route that refuses a request without a login, a change deployed but never tried,
+  "not tested end to end". Leave it out; when nothing settles the question, say briefly that the person will confirm.
 - **Never decide for the person**: no deadlines, priorities or new work committed, nothing approved or merged, no
   proposal accepted that they have not taken. Reply that they will pick it up later (or ask a clarifying question),
   and list the item for them in the session.
