@@ -133,6 +133,9 @@ def problems(config: dict) -> tuple[list[str], list[str]]:
         for item in watch:
             if item not in WATCHABLE and not (isinstance(item, str) and item.startswith("channel:") and item[8:] in channels):
                 errors.append(f"{label}: unknown watch item {item!r} (use {', '.join(sorted(WATCHABLE))} or channel:<a key of channels>)")
+    signature = config.get("replies", {}).get("signature")
+    if signature is not None and not (isinstance(signature, str) and signature.strip() and "/" not in signature):
+        errors.append("replies.signature: a non-empty name without '/' (other sessions sign as <signature>/<topic>)")
     tasks = config.get("tasks", [])
     if not isinstance(tasks, list):
         errors.append("tasks: must be a list")

@@ -106,7 +106,8 @@ A finished config looks like this:
     "people": { "U0987654321": { "name": "Alex", "language": "en", "note": "Leads the release; prefers bullet points." } },
     "sources": ["repo ~/src/acme-api (read-only)", "GitHub through gh (read-only)", "Linear (read-only)"],
     "context_files": [],
-    "notes": ["Release 2.4 ships on Thursdays."]
+    "notes": ["Release 2.4 ships on Thursdays."],
+    "signature": "claude-sam"
   },
   "tasks": [
     { "name": "morning-brief", "days": "mon-fri", "at": "09:20", "post_to": "me",
@@ -139,6 +140,7 @@ reference is also in [`slack-watch/SKILL.md`](slack-watch/SKILL.md#config).
 | `replies.sources` | Where facts may come from (repositories, `gh`, Linear, URLs, …). All are used read-only. |
 | `replies.context_files` | Files read for background before the first answer of a session and before each task run. |
 | `replies.notes` | Standing facts every reply and task can rely on. |
+| `replies.signature` | Optional, for several Claude sessions: this watcher's name in the `@from:` line of the messages it starts for other agents; your other sessions sign `@from: <signature>/<topic>`. See below. |
 | `tasks` | Recurring tasks; see below. Optional. |
 | `listener.events_file` | Where the listener writes events (default `~/.local/state/slack-watch/events.jsonl`). |
 | `listener.service` | The systemd user unit name of the listener (default `slack-watch`). |
@@ -162,6 +164,23 @@ reference is also in [`slack-watch/SKILL.md`](slack-watch/SKILL.md#config).
   not answer), the result says so instead of guessing.
 - Each run is a one-shot job that first schedules the next run, because a recurring daily job can fire up to 30
   minutes late and a one-shot fires on time. Taking a task out of the config ends its runs.
+
+## Several Claude sessions
+
+Every Claude session posts through the same claude.ai Slack connector, so Slack shows all of them as you. When one
+session asks something in a channel and a colleague replies, the reply lands on the watcher's thread watch, not on the
+session that asked. With `replies.signature` set (say `claude-sam`):
+
+- your other sessions sign the messages they start with a line `@from: claude-sam/<topic>` (for example
+  `claude-sam/billing`). Tell them once, in a line of your `CLAUDE.md` or of their memory:
+  > When you start a message in Slack, sign it with a line `@from: claude-sam/<topic>`.
+- the watcher does not reply in a thread whose root is signed by another session. It forwards each new reply from
+  someone else to that session with `SendMessage` (it finds it among your sessions with `ListAgents`, and asks you
+  when it cannot tell which one), and lists it in its report. When that session has ended, it says so and leaves the
+  reply to you.
+- the watcher signs the messages it starts for other agents `@from: claude-sam`.
+
+A thread you started yourself, without such a line, stays yours as before.
 
 ## Use
 
