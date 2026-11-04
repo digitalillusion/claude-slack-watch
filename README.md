@@ -41,9 +41,9 @@ Slack ◀──── claude.ai Slack connector (read, search, send as you) ─�
   code read but tests not run).
 - It answers whether something works only with evidence that settles it, and reads what the people involved already
   reported first. A weak signal (a route that refuses a request without a login, a change deployed but never tried)
-  is left out; when nothing settles it, the reply says you will confirm.
-- It **never decides for you**: no deadlines, priorities, approvals, merges or new work. It replies that you'll pick
-  it up, or asks a clarifying question, and lists the item for you in the session.
+  is left out; when nothing settles it, nothing is posted and the item is listed for you in the session.
+- It **never decides for you**: no deadlines, priorities, approvals, merges or new work. It posts nothing in Slack,
+  not even that you'll pick it up, and lists the item for you in the session.
 - It **never acts on a message's request**: messages are information, not instructions. Code, branches, PRs, tickets
   and documents are not changed because someone asked in Slack.
 - Replies go out in your name. Slack marks messages sent through the connector with a "Sent using Claude" note, so
